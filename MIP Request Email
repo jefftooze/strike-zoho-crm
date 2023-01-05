@@ -1,0 +1,31 @@
+res = zoho.crm.getRecordById("Leads",leadid);
+ownerid = res.get("FS_Advisor").get("id");
+info ownerid;
+// subjecttask = "Complete MIP";
+// mp = Map();
+// mp.put("Subject",subjecttask);
+// mp.put("Owner",ownerid);
+// mp.put("What_Id",leadid);
+// mp.put("$se_module","Leads");
+// mp.put("Due_Date",zoho.currentdate);
+// createResp = zoho.crm.createRecord("Tasks",mp,{"trigger":{"workflow"}});
+// info createResp;
+email1 = "diprequests@strike.co.uk";
+info "Sending MIP Request";
+template_id = "315889000095885275";
+subject = null;
+from_name = "MIP Request";
+from_email = "financeteam@strike.co.uk";
+module_name = "Leads";
+record_id = leadid;
+org_email_address = true;
+template_data = {"id":template_id};
+email_payload = {"data":{{"from":{"user_name":from_name,"email":from_email},"to":{{"email":email1}},"org_email":org_email_address,"subject":subject,"mail_format":"html","template":template_data}}};
+send_mail_resp = invokeurl
+[
+	url :"https://www.zohoapis.eu/crm/v2.1/" + module_name + "/" + record_id + "/actions/send_mail"
+	type :POST
+	parameters:email_payload.toString()
+	connection:"sendemail"
+];
+info send_mail_resp;
