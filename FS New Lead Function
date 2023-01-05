@@ -20,7 +20,6 @@ else
 	loan_value = get_deposit - get_purchase_price;
 	newdeposit = get_purchase_price;
 	newpurchase = get_deposit;
-	bla = "Bla":
 }
 info loan_value;
 if(get_purchase_price > 0 && get_deposit > 0)
@@ -55,7 +54,6 @@ l_Leads = zoho.crm.searchRecords("Leads","(Email:equals:" + v_Email + ")");
 // info l_Leads;
 v_fs_lead = "New FS lead";
 fs_map = Collection();
-bal = "bla";
 for each  rec in l_Leads
 {
 	record_id = rec.get("id");
