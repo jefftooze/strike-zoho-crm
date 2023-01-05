@@ -55,6 +55,7 @@ l_Leads = zoho.crm.searchRecords("Leads","(Email:equals:" + v_Email + ")");
 // info l_Leads;
 v_fs_lead = "New FS lead";
 fs_map = Collection();
+bal = "bla";
 for each  rec in l_Leads
 {
 	record_id = rec.get("id");
