@@ -20,6 +20,7 @@ else
 	loan_value = get_deposit - get_purchase_price;
 	newdeposit = get_purchase_price;
 	newpurchase = get_deposit;
+	bla = "Bla":
 }
 info loan_value;
 if(get_purchase_price > 0 && get_deposit > 0)
