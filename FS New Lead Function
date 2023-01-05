@@ -1,0 +1,577 @@
+r_lead = zoho.crm.getRecordById("Leads",LeadID);
+get_purchase_price = r_lead.get("PropertyPrice");
+info get_purchase_price;
+get_deposit = r_lead.get("Deposit_Amount");
+info get_deposit;
+if(get_deposit == null)
+{
+	get_deposit = 0;
+}
+if(get_purchase_price == null)
+{
+	get_purchase_price = 0;
+}
+if(get_purchase_price > get_deposit)
+{
+	loan_value = get_purchase_price - get_deposit;
+}
+else
+{
+	loan_value = get_deposit - get_purchase_price;
+	newdeposit = get_purchase_price;
+	newpurchase = get_deposit;
+}
+info loan_value;
+if(get_purchase_price > 0 && get_deposit > 0)
+{
+	loan_to_value = (loan_value / get_purchase_price * 100).round(0);
+}
+else
+{
+	loan_to_value = "0";
+}
+if(loan_to_value < 0 || loan_value < 0)
+{
+	loan_value = "0";
+	loan_to_value = "0";
+}
+info loan_to_value;
+m_map = Map();
+if(get_deposit > get_purchase_price)
+{
+	changemap = Map();
+	changemap.put("PropertyPrice",newpurchase);
+	changemap.put("Deposit_Amount",newdeposit);
+	zoho.crm.updateRecord("Leads",LeadID,changemap);
+}
+m_map.put("Loan_Size",loan_value);
+m_map.put("Loan_to_Value",loan_to_value);
+zoho.crm.updateRecord("Leads",LeadID,m_map,{"trigger":{"workflow"}});
+// info r_lead;
+v_Email = r_lead.get("Email");
+// info v_Email;
+l_Leads = zoho.crm.searchRecords("Leads","(Email:equals:" + v_Email + ")");
+// info l_Leads;
+v_fs_lead = "New FS lead";
+fs_map = Collection();
+for each  rec in l_Leads
+{
+	record_id = rec.get("id");
+	if(record_id == LeadID)
+	{
+		info "Found the same Lead - Do nothing";
+	}
+	else
+	{
+		ignore_check = rec.get("Ignore_Duplicate_Check");
+		fs_lead_check = rec.get("Lead_Type");
+		cold_lead = rec.get("Original_or_Duplicate");
+		if(cold_lead == "Lead Cold" || cold_lead == "Duplicate Lead" || cold_lead == "Reactivated Duplicate")
+		{
+			cold_lead_check = true;
+		}
+		else
+		{
+			cold_lead_check = false;
+		}
+		info fs_lead_check;
+		info ignore_check;
+		info cold_lead_check;
+		if(ignore_check == false && fs_lead_check == v_fs_lead && cold_lead_check == false)
+		{
+			fs_map.insertAll(rec.get("Original_or_Duplicate"));
+		}
+	}
+}
+info fs_map;
+update_map = Map();
+if(fs_map.isEmpty())
+{
+	update_map.put("Original_or_Duplicate","Original Lead");
+	zoho.crm.updateRecord("Leads",LeadID,update_map);
+}
+else if(fs_map.containsValue("Original Lead"))
+{
+	search_original = zoho.crm.searchRecords("Leads","(Email:equals:" + v_Email + ")");
+	for each  l in search_original
+	{
+		if(l.containsValue("Original Lead"))
+		{
+			original_id = l.get("id");
+			info original_id;
+		}
+	}
+	get_org_lead = zoho.crm.getRecordById("Leads",original_id);
+	org_lead_status = get_org_lead.get("Lead_Status");
+	info org_lead_status;
+	if(org_lead_status == "Not Contactable" || org_lead_status == "Not Interested" || org_lead_status == "Unproceedable" || org_lead_status == "Duplicate Lead")
+	{
+		cold_map = Map();
+		cold_map.put("Original_or_Duplicate","Lead Cold");
+		zoho.crm.updateRecord("Leads",original_id,cold_map);
+		update_map.put("Original_or_Duplicate","Original Lead");
+		zoho.crm.updateRecord("Leads",LeadID,update_map);
+	}
+	else
+	{
+		update_map.put("Original_or_Duplicate","Duplicate Lead");
+		update_map.put("Original_Lead_ID",original_id);
+		info update_map;
+		response = zoho.crm.updateRecord("Leads",LeadID,update_map);
+		info response;
+		Module = "Leads";
+		Record_ID = LeadID;
+		bpGetRes = invokeurl
+		[
+			url :"https://www.zohoapis.eu/crm/v2/" + Module + "/" + Record_ID + "/actions/blueprint"
+			type :GET
+			connection:"modulesallconnection"
+		];
+		info "bpGetRes = " + bpGetRes;
+		info "________________________________";
+		blueprint = bpGetRes.getJSON("blueprint");
+		transitions = blueprint.getJSON("transitions").toJSONList();
+		duplicateLeadTransition = null;
+		for each  transition in transitions
+		{
+			if(transition.getJSON("name") == "Duplicate Lead")
+			{
+				duplicateLeadTransition = transition;
+			}
+		}
+		info "-----TRANSITIONS START -----";
+		info duplicateLeadTransition;
+		info "-----TRANSITIONS END -----";
+		if(duplicateLeadTransition != null)
+		{
+			Next_Transition_ID = duplicateLeadTransition.getJSON("id");
+			bpPutResParams = "{\"blueprint\": [{\"transition_id\": \"" + Next_Transition_ID + "\"}]}";
+			bpPutRes = invokeurl
+			[
+				url :"https://www.zohoapis.eu/crm/v2/" + Module + "/" + Record_ID + "/actions/blueprint"
+				type :PUT
+				parameters:bpPutResParams
+				connection:"modulesallconnection"
+			];
+			info bpPutRes;
+			//
+			update_msg = "This Lead has been automatically marked as a Duplicate of an existing Original Lead - Please click on the Link on this Lead through to the Original Lead. Please check the Original Lead is being dealt with i.e it has an active task and is not an old Lead. If the Original Lead has gone Cold, please consider recontacting this Lead and qualify them as normal";
+			subjecttask = "Duplicate Sense Check";
+			owner_id = r_lead.get("Owner").get("id");
+			r_user = zoho.crm.getRecordById("users",owner_id);
+			info r_user;
+			r_user = r_user.get("users").toCollection();
+			info r_user;
+			r_role = r_user.get("role").get("name");
+			mp = Map();
+			mp.put("Subject",subjecttask);
+			mp.put("Owner",owner_id);
+			mp.put("What_Id",LeadID);
+			mp.put("$se_module","Leads");
+			mp.put("Description",update_msg);
+			mp.put("Due_Date",zoho.currentdate);
+			mp.put("Owner_Role",r_role);
+			createResp = zoho.crm.createRecord("Tasks",mp,{"trigger":{"workflow"}});
+			info createResp;
+		}
+	}
+}
+// FOLLOWING CHECKS THAT IF MULTIPLE LEADS WERE CREATED SIMULTANOUSLY AND MORE THAN ONE WAS MARKED AS THE ORIGINAL LEADS, THAT ONLY ONE OF THESE WILL REMAIN THE ORIGINAL LEAD AND THE REST WILL BE MARKED AS DUPLICATES
+standalone.wait(1);
+r_lead = zoho.crm.getRecordById("Leads",LeadID);
+// info r_lead;
+v_Email = r_lead.get("Email");
+info v_Email;
+l_Leads = zoho.crm.searchRecords("Leads","(Email:equals:" + v_Email + ")");
+// info l_Leads ;
+v_fs_lead = "New FS lead";
+recheck_map = Collection();
+for each  rec in l_Leads
+{
+	ignore_check = rec.get("Ignore_Duplicate_Check");
+	fs_lead_check = rec.get("Lead_Type");
+	cold_lead = rec.get("Original_or_Duplicate");
+	if(cold_lead == "Lead Cold")
+	{
+		cold_lead_check = true;
+	}
+	else
+	{
+		cold_lead_check = false;
+	}
+	info fs_lead_check;
+	info ignore_check;
+	info cold_lead_check;
+	if(ignore_check == false && fs_lead_check == v_fs_lead && cold_lead_check == false)
+	{
+		if(rec.get("Original_or_Duplicate") = "Original Lead")
+		{
+			recheck_map.insertAll(rec.get("id"));
+		}
+	}
+}
+info recheck_map;
+recheck_list = recheck_map.toList().sort();
+if(recheck_list.size() > 0)
+{
+	get_original_lead_id = recheck_list.get(0);
+	info recheck_list;
+	remove = recheck_list.remove(0);
+	info recheck_list;
+	info recheck_list.size();
+	if(recheck_list.size() > 0)
+	{
+		for each  lead in recheck_list
+		{
+			Module = "Leads";
+			Record_ID = lead;
+			bpGetRes = invokeurl
+			[
+				url :"https://www.zohoapis.eu/crm/v2/" + Module + "/" + Record_ID + "/actions/blueprint"
+				type :GET
+				connection:"modulesallconnection"
+			];
+			info "bpGetRes = " + bpGetRes;
+			info "________________________________";
+			blueprint = bpGetRes.getJSON("blueprint");
+			transitions = blueprint.getJSON("transitions").toJSONList();
+			duplicateLeadTransition = null;
+			for each  transition in transitions
+			{
+				if(transition.getJSON("name") == "Duplicate Lead")
+				{
+					duplicateLeadTransition = transition;
+				}
+			}
+			info "-----TRANSITIONS START -----";
+			info duplicateLeadTransition;
+			info "-----TRANSITIONS END -----";
+			if(duplicateLeadTransition != null)
+			{
+				org_map = Map();
+				org_map.put("Original_Lead_ID",get_original_lead_id);
+				r_org = zoho.crm.updateRecord("Leads",LeadID,org_map);
+				Next_Transition_ID = duplicateLeadTransition.getJSON("id");
+				bpPutResParams = "{\"blueprint\": [{\"transition_id\": \"" + Next_Transition_ID + "\"}]}";
+				bpPutRes = invokeurl
+				[
+					url :"https://www.zohoapis.eu/crm/v2/" + Module + "/" + Record_ID + "/actions/blueprint"
+					type :PUT
+					parameters:bpPutResParams
+					connection:"modulesallconnection"
+				];
+				info bpPutRes;
+				check_lead = zoho.crm.getRecordById("Leads",LeadID);
+				lead_status = check_lead.get("Lead_Status");
+				if(lead_status == "Duplicate Lead")
+				{
+					get_lead_tasks = zoho.crm.getRelatedRecords("Tasks","Leads",LeadID);
+					info get_lead_tasks;
+					for each  T in get_lead_tasks
+					{
+						TaskID = T.get("id");
+						T = zoho.crm.getRecordById("Tasks",TaskID);
+						Task_Status = T.get("Status");
+						info Task_Status;
+						T_subject = T.get("Subject");
+						info T_subject;
+						if(Task_Status == "Not Started")
+						{
+							if(T_subject.contains("Contact new FS Referral"))
+							{
+								id = T.get("id");
+								info id;
+								statusses = {"Status":"Completed","Outcome":"Closed Automatically"};
+								info "Closing Task";
+								thisTask = zoho.crm.updateRecord("Tasks",TaskID,statusses);
+								info thisTask;
+							}
+							else
+							{
+								info "Did not Close Task";
+							}
+						}
+					}
+					get_lead_tasks = zoho.crm.getRelatedRecords("Tasks","Leads",LeadID);
+					info get_lead_tasks;
+					block_task = false;
+					for each  T in get_lead_tasks
+					{
+						TaskID = T.get("id");
+						T = zoho.crm.getRecordById("Tasks",TaskID);
+						Task_Status = T.get("Status");
+						info Task_Status;
+						T_subject = T.get("Subject");
+						info T_subject;
+						if(Task_Status == "Not Started")
+						{
+							if(T_subject == "Duplicate Sense Check")
+							{
+								block_task = true;
+							}
+							else
+							{
+								info "Not Sense Check";
+							}
+						}
+					}
+					if(block_task == false)
+					{
+						update_msg = "This Lead has been automatically marked as a Duplicate of an existing Original Lead - Please click on the Link on this Lead through to the Original Lead. Please check the Original Lead is being dealt with i.e it has an active task and is not an old Lead. If the Original Lead has gone Cold, please consider recontacting this Lead and qualify them as normal";
+						subjecttask = "Duplicate Sense Check";
+						owner_id = r_lead.get("Owner").get("id");
+						r_user = zoho.crm.getRecordById("users",owner_id);
+						info r_user;
+						r_user = r_user.get("users").toCollection();
+						info r_user;
+						r_role = r_user.get("role").get("name");
+						mp = Map();
+						mp.put("Subject",subjecttask);
+						mp.put("Owner",owner_id);
+						mp.put("What_Id",LeadID);
+						mp.put("$se_module","Leads");
+						mp.put("Description",update_msg);
+						mp.put("Due_Date",zoho.currentdate);
+						mp.put("Owner_Role",r_role);
+						createResp = zoho.crm.createRecord("Tasks",mp,{"trigger":{"workflow"}});
+						info createResp;
+					}
+				}
+			}
+		}
+	}
+}
+// THIS ALWAYS RUNS ON EVERY LEAD
+lead_record = zoho.crm.getRecordById("Leads",LeadID);
+check_duplicate = lead_record.get("Original_or_Duplicate");
+check_referrer = lead_record.get("Referred_by");
+checktest = lead_record.get("Test_Group");
+ltcheck = lead_record.get("Live_Transfer_Attempted");
+lead_email = lead_record.get("Email");
+owner_name = lead_record.get("Owner").get("name");
+owner_id = lead_record.get("Owner").get("id");
+r_user = zoho.crm.getRecordById("users",owner_id);
+info r_user;
+r_user = r_user.get("users").toCollection();
+info r_user;
+r_role = r_user.get("role").get("name");
+StringMAP = Map();
+string1 = "*ADD SUPPORTING NOTES HERE FOR MIP REQUESTS*";
+string2 = "Commission:" + "\n" + "Bonus:" + "\n" + "Overtime:" + "\n" + "Benefits:" + "\n" + "Maintenance:";
+string3 = "First Name(s):" + "\n" + "Age(s):" + "\n" + "Childcare Costs:" + "\n" + "Maintainance Costs:" + "\n" + "School Fees:";
+string4 = "Credit Cards:" + "\n" + "Loans:" + "\n" + "HP/PCP:" + "\n" + "Student Loan:" + "\n" + "Pension:";
+StringMAP.put("MIP_Request_Notes",string1);
+StringMAP.put("Additional_Income",string2);
+StringMAP.put("A_Additional_Income_Notes",string2);
+StringMAP.put("Age_of_Dependents",string3);
+StringMAP.put("Credit_Commitments",string4);
+StringMAP.put("A_Credit_Commitments_Comments",string4);
+StringMAP.put("Assigned_To",owner_name);
+Stringupdate = zoho.crm.updateRecord("Leads",LeadID,StringMAP);
+info Stringupdate;
+info check_duplicate;
+info check_referrer;
+info lead_email;
+if(ltcheck != true)
+{
+	if(check_duplicate != "Duplicate Lead")
+	{
+		if(check_referrer != "Self-refer")
+		{
+			info "Referred from Ops";
+			info owner_id;
+			update_msg = "Please contact this new FS Referral";
+			subjecttask = "Contact new FS Referral";
+			mp = Map();
+			mp.put("Subject",subjecttask);
+			mp.put("Owner",owner_id);
+			mp.put("What_Id",LeadID);
+			mp.put("Task_Type","Call");
+			mp.put("$se_module","Leads");
+			mp.put("Description",update_msg);
+			mp.put("Due_Date",zoho.currentdate);
+			mp.put("Owner_Role",r_role);
+			createResp = zoho.crm.createRecord("Tasks",mp,{"trigger":{"workflow"}});
+			info createResp;
+			info "Sending Standard Email";
+			template_id = "315889000050422585";
+			to_email = lead_email;
+			subject = null;
+			from_name = "Strike Financial Services";
+			from_email = "mortgages@strike.co.uk";
+			module_name = "Leads";
+			record_id = LeadID;
+			org_email_address = true;
+			template_data = {"id":template_id};
+			email_payload = {"data":{{"from":{"user_name":from_name,"email":from_email},"to":{{"email":to_email}},"org_email":org_email_address,"subject":subject,"mail_format":"html","template":template_data}}};
+			send_mail_resp = invokeurl
+			[
+				url :"https://www.zohoapis.eu/crm/v2.1/" + module_name + "/" + record_id + "/actions/send_mail"
+				type :POST
+				parameters:email_payload.toString()
+				connection:"sendemail"
+			];
+			info send_mail_resp;
+		}
+		else
+		{
+			info "Self-Referred";
+			info owner_id;
+			update_msg = "Please contact this new FS Referral";
+			subjecttask = "Contact new FS Referral";
+			mp = Map();
+			mp.put("Subject",subjecttask);
+			mp.put("Owner",owner_id);
+			mp.put("What_Id",LeadID);
+			mp.put("Task_Type","Call");
+			mp.put("$se_module","Leads");
+			mp.put("Description",update_msg);
+			mp.put("Due_Date",zoho.currentdate);
+			mp.put("Owner_Role",r_role);
+			createResp = zoho.crm.createRecord("Tasks",mp,{"trigger":{"workflow"}});
+			info createResp;
+			info "Sending Self Refer Email";
+			template_id = "315889000050499206";
+			to_email = lead_email;
+			subject = null;
+			from_name = "Strike Financial Services";
+			from_email = "mortgages@strike.co.uk";
+			module_name = "Leads";
+			record_id = LeadID;
+			org_email_address = true;
+			template_data = {"id":template_id};
+			email_payload = {"data":{{"from":{"user_name":from_name,"email":from_email},"to":{{"email":to_email}},"org_email":org_email_address,"subject":subject,"mail_format":"html","template":template_data}}};
+			send_mail_resp = invokeurl
+			[
+				url :"https://www.zohoapis.eu/crm/v2.1/" + module_name + "/" + record_id + "/actions/send_mail"
+				type :POST
+				parameters:email_payload.toString()
+				connection:"sendemail"
+			];
+			info send_mail_resp;
+		}
+	}
+}
+else if(ltcheck == true)
+{
+	if(check_duplicate != "Duplicate Lead" && check_duplicate != "Reactivated Duplicate")
+	{
+		info owner_id;
+		update_msg = "Please contact this new FS Referral";
+		subjecttask = "Contact new FS Referral";
+		mp = Map();
+		mp.put("Subject",subjecttask);
+		mp.put("Owner",owner_id);
+		mp.put("What_Id",LeadID);
+		mp.put("Task_Type","Call");
+		mp.put("$se_module","Leads");
+		mp.put("Description",update_msg);
+		mp.put("Due_Date",zoho.currentdate);
+		mp.put("Owner_Role",r_role);
+		createResp = zoho.crm.createRecord("Tasks",mp,{"trigger":{"workflow"}});
+		info createResp;
+	}
+}
+buying_position = r_lead.get("Moving_Position");
+finance_position = r_lead.get("Financial_Position");
+info buying_position;
+info finance_position;
+position_map = Map();
+if(buying_position == "first_time_buyer")
+{
+	position_map.put("Moving_Position","First Time Buyer");
+}
+if(buying_position == "not_on_the_market")
+{
+	position_map.put("Moving_Position","Not on the Market");
+}
+if(buying_position == "unknown")
+{
+	position_map.put("Moving_Position","Unknown");
+}
+if(buying_position == null)
+{
+	position_map.put("Moving_Position","Unknown");
+}
+if(buying_position == "just_buying")
+{
+	position_map.put("Moving_Position","Purchasing (Nothing to Sell)");
+}
+if(buying_position == "no_chain")
+{
+	position_map.put("Moving_Position","Purchasing (Nothing to Sell)");
+}
+if(buying_position == "on_the_market")
+{
+	position_map.put("Moving_Position","On the Market");
+}
+if(buying_position == "completed")
+{
+	position_map.put("Moving_Position","Sale Completed");
+}
+if(buying_position == "accepted_offer")
+{
+	position_map.put("Moving_Position","Accepted an Offer");
+}
+if(buying_position == "second_home")
+{
+	position_map.put("Moving_Position","Second Home");
+}
+if(buying_position == "investor_second_home")
+{
+	position_map.put("Moving_Position","Investor");
+}
+if(buying_position == "investor")
+{
+	position_map.put("Moving_Position","Investor");
+}
+if(finance_position == "just_getting_started")
+{
+	position_map.put("Financial_Position","Just Getting Started");
+}
+if(finance_position == "mortgage_in_principle_secured")
+{
+	position_map.put("Financial_Position","Mortgage in Principle Secured");
+}
+if(finance_position == "unknown")
+{
+	position_map.put("Financial_Position","Unconfirmed");
+}
+if(finance_position == null)
+{
+	position_map.put("Financial_Position","Unconfirmed");
+}
+if(finance_position == "moving_mortgage")
+{
+	position_map.put("Financial_Position","Moving Current Mortgage");
+}
+if(finance_position == "cash_buyer")
+{
+	position_map.put("Financial_Position","Cash Buyer");
+}
+if(finance_position == "cash_buyer")
+{
+	position_map.put("Financial_Position","Cash Buyer (Outright)");
+}
+if(finance_position == "cash_from_sale")
+{
+	position_map.put("Financial_Position","Cash Buyer (From Sale)");
+}
+if(finance_position == "buying")
+{
+	position_map.put("Financial_Position","Unconfirmed");
+}
+if(finance_position == "buying_and_selling")
+{
+	position_map.put("Financial_Position","Moving Current Mortgage");
+}
+if(finance_position == "remortgaging")
+{
+	position_map.put("Financial_Position","Moving Current Mortgage");
+}
+if(finance_position == "buying_and_selling")
+{
+	position_map.put("Financial_Position","Moving Current Mortgage");
+}
+info position_map;
+zoho.crm.updateRecord("Leads",LeadID,position_map);
